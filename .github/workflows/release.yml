@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (for example v1.0.0)"
+        required: true
+        default: "v1.0.0"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Install Linux UI deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev xorg-dev
+
+      - name: Determine tag
+        id: tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "value=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build Linux binary
+        run: |
+          mkdir -p dist
+          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o dist/rocketleague-companion-linux-amd64 ./cmd/companion
+
+      - name: Build Windows binary
+        shell: bash
+        run: |
+          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o dist/rocketleague-companion-windows-amd64.exe ./cmd/companion
+
+      - name: Build macOS binary
+        shell: bash
+        run: |
+          GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o dist/rocketleague-companion-darwin-arm64 ./cmd/companion
+
+      - name: Create release archive
+        shell: bash
+        run: |
+          cd dist
+          zip -j "rocketleague-companion-${{ steps.tag.outputs.value }}-linux-amd64.zip" rocketleague-companion-linux-amd64
+          zip -j "rocketleague-companion-${{ steps.tag.outputs.value }}-windows-amd64.zip" rocketleague-companion-windows-amd64.exe
+          zip -j "rocketleague-companion-${{ steps.tag.outputs.value }}-darwin-arm64.zip" rocketleague-companion-darwin-arm64
+          ls -1
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.value }}
+          generate_release_notes: true
+          files: |
+            dist/*.zip
