@@ -15,9 +15,25 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    name: Build and publish release
-    runs-on: ubuntu-latest
+  build:
+    name: Build ${{ matrix.name }} artifact
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            runner: ubuntu-latest
+            artifact: rocketleague-companion-linux-amd64
+            output: dist/rocketleague-companion-linux-amd64
+          - name: Windows
+            runner: windows-latest
+            artifact: rocketleague-companion-windows-amd64.exe
+            output: dist/rocketleague-companion-windows-amd64.exe
+          - name: macOS
+            runner: macos-latest
+            artifact: rocketleague-companion-darwin-arm64
+            output: dist/rocketleague-companion-darwin-arm64
 
     steps:
       - name: Checkout code
@@ -31,9 +47,34 @@ jobs:
           go-version: "1.22"
 
       - name: Install Linux UI deps
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libgl1-mesa-dev xorg-dev
+
+      - name: Build binary
+        shell: bash
+        run: |
+          mkdir -p dist
+          go build -trimpath -ldflags "-s -w" -o "${{ matrix.output }}" ./cmd/companion
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.output }}
+
+  publish:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Determine tag
         id: tag
@@ -45,28 +86,16 @@ jobs:
             echo "value=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Build Linux binary
-        run: |
-          mkdir -p dist
-          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o dist/rocketleague-companion-linux-amd64 ./cmd/companion
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
 
-      - name: Build Windows binary
-        shell: bash
-        run: |
-          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o dist/rocketleague-companion-windows-amd64.exe ./cmd/companion
-
-      - name: Build macOS binary
-        shell: bash
-        run: |
-          GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o dist/rocketleague-companion-darwin-arm64 ./cmd/companion
-
-      - name: Create release archive
+      - name: Prepare zip files
         shell: bash
         run: |
           cd dist
-          zip -j "rocketleague-companion-${{ steps.tag.outputs.value }}-linux-amd64.zip" rocketleague-companion-linux-amd64
-          zip -j "rocketleague-companion-${{ steps.tag.outputs.value }}-windows-amd64.zip" rocketleague-companion-windows-amd64.exe
-          zip -j "rocketleague-companion-${{ steps.tag.outputs.value }}-darwin-arm64.zip" rocketleague-companion-darwin-arm64
+          find . -type f -maxdepth 2 -exec sh -c 'for f do zip -j "$(basename "$f" .exe).zip" "$f"; done' sh {} +
           ls -1
 
       - name: Create GitHub Release
