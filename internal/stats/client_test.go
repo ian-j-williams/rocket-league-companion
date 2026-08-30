@@ -8,15 +8,21 @@ import (
 )
 
 func TestClientAcceptsStatsStream(t *testing.T) {
-	client := NewClient(0)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen test server: %v", err)
+	}
+	defer listener.Close()
+
+	client := NewClient(listener.Addr().(*net.TCPAddr).Port)
 	if err := client.Start(); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
 	defer client.Close()
 
-	conn, err := net.Dial("tcp", client.Addr().String())
+	conn, err := listener.Accept()
 	if err != nil {
-		t.Fatalf("dial listener: %v", err)
+		t.Fatalf("accept client connection: %v", err)
 	}
 	defer conn.Close()
 

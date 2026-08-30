@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"sync"
+	"time"
 )
 
 // Snapshot is the subset of Rocket League Stats API data the companion UI renders.
@@ -37,9 +39,11 @@ type updateStateData struct {
 
 // Client connects to the local Rocket League stats socket and streams parsed snapshots.
 type Client struct {
-	port     int
-	listener net.Listener
-	updates  chan Snapshot
+	port    int
+	conn    net.Conn
+	updates chan Snapshot
+	done    chan struct{}
+	close   sync.Once
 }
 
 func NewClient(port int) *Client {
@@ -50,44 +54,53 @@ func NewClient(port int) *Client {
 }
 
 func (c *Client) Start() error {
-	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(c.port))
-	listener, err := net.Listen("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("listen on %s: %w", addr, err)
-	}
-	c.listener = listener
-	go c.acceptLoop()
+	c.done = make(chan struct{})
+	go c.connectLoop()
 	return nil
 }
 
-func (c *Client) acceptLoop() {
+func (c *Client) connectLoop() {
 	defer close(c.updates)
 
 	for {
-		conn, err := c.listener.Accept()
-		if err != nil {
+		select {
+		case <-c.done:
 			return
+		default:
 		}
-		go c.readLoop(conn)
+
+		addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(c.port))
+		conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+		if err != nil {
+			select {
+			case <-c.done:
+				return
+			case <-time.After(time.Second):
+				continue
+			}
+		}
+
+		c.conn = conn
+		c.readLoop(conn)
+		c.conn = nil
 	}
 }
 
 func (c *Client) Close() error {
-	if c.listener == nil {
+	if c.done == nil {
 		return nil
 	}
-	return c.listener.Close()
+	c.close.Do(func() {
+		close(c.done)
+		if c.conn != nil {
+			c.conn.Close()
+		}
+	})
+	return nil
 }
 
 func (c *Client) Updates() <-chan Snapshot {
 	return c.updates
-}
-
-func (c *Client) Addr() net.Addr {
-	if c.listener == nil {
-		return nil
-	}
-	return c.listener.Addr()
 }
 
 func (c *Client) readLoop(conn net.Conn) {
