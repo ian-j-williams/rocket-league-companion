@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -49,5 +50,14 @@ func Save(path string, settings Settings) error {
 		return err
 	}
 
+	return os.WriteFile(path, data, 0o644)
+}
+
+func SaveRocketLeague(path string, settings Settings) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+
+	data := fmt.Appendf(nil, "[StatsAPI]\nbEnabled=true\nPacketSendRate=%.0f\nPort=%d\nWebPort=%d\n", settings.PacketSendRate, settings.Port, settings.WebPort)
 	return os.WriteFile(path, data, 0o644)
 }

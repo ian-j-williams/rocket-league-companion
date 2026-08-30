@@ -18,6 +18,7 @@ import (
 
 func main() {
 	settingsPath := filepath.Join(homeDir(), ".rocketleague-companion", "settings.json")
+	defaultStatsAPIPath, userStatsAPIPath := rocketLeagueConfigPaths()
 	settings, err := config.Load(settingsPath)
 	if err != nil {
 		fmt.Printf("failed to load settings: %v\n", err)
@@ -25,8 +26,18 @@ func main() {
 	}
 
 	tracker := state.NewSessionStats()
-	ui := newCompanionUI(settings, settingsPath, tracker)
+	ui := newCompanionUI(settings, settingsPath, defaultStatsAPIPath, userStatsAPIPath, tracker)
 	ui.show()
+}
+
+func rocketLeagueConfigPaths() (string, string) {
+	executable, err := os.Executable()
+	if err != nil {
+		executable = "."
+	}
+	defaultPath := filepath.Join(filepath.Dir(executable), "..", "DefaultStatsAPI.ini")
+	userPath := filepath.Join(homeDir(), "My Games", "Rocket League", "TAGame", "Config", "TAStatsAPI.ini")
+	return filepath.Clean(defaultPath), userPath
 }
 
 func homeDir() string {
@@ -38,24 +49,28 @@ func homeDir() string {
 }
 
 type companionUI struct {
-	settings     config.Settings
-	settingsPath string
-	session      *state.SessionStats
-	app          fyne.App
-	window       fyne.Window
-	status       *widget.Label
-	match        *widget.Label
-	score        *widget.Label
-	trackerWins  *widget.Label
-	trackerLoss  *widget.Label
-	rateSlider   *widget.Slider
+	settings            config.Settings
+	settingsPath        string
+	defaultStatsAPIPath string
+	userStatsAPIPath    string
+	session             *state.SessionStats
+	app                 fyne.App
+	window              fyne.Window
+	status              *widget.Label
+	match               *widget.Label
+	score               *widget.Label
+	trackerWins         *widget.Label
+	trackerLoss         *widget.Label
+	rateSlider          *widget.Slider
 }
 
-func newCompanionUI(settings config.Settings, settingsPath string, session *state.SessionStats) *companionUI {
+func newCompanionUI(settings config.Settings, settingsPath, defaultStatsAPIPath, userStatsAPIPath string, session *state.SessionStats) *companionUI {
 	return &companionUI{
-		settings:     settings,
-		settingsPath: settingsPath,
-		session:      session,
+		settings:            settings,
+		settingsPath:        settingsPath,
+		defaultStatsAPIPath: defaultStatsAPIPath,
+		userStatsAPIPath:    userStatsAPIPath,
+		session:             session,
 	}
 }
 
@@ -73,11 +88,11 @@ func (u *companionUI) show() {
 	u.rateSlider = widget.NewSlider(5, 120)
 	u.rateSlider.Step = 5
 	u.rateSlider.Value = u.settings.PacketSendRate
+	rateLabel := widget.NewLabel(fmt.Sprintf("Current: %.0f Hz", u.settings.PacketSendRate))
 	u.rateSlider.OnChanged = func(value float64) {
 		u.settings.PacketSendRate = value
+		rateLabel.SetText(fmt.Sprintf("Current: %.0f Hz", value))
 	}
-
-	rateLabel := widget.NewLabel(fmt.Sprintf("Recommended: %.0f Hz", u.settings.PacketSendRate))
 
 	settingsForm := container.NewVBox(
 		widget.NewLabel("PacketSendRate"),
@@ -88,6 +103,14 @@ func (u *companionUI) show() {
 		widget.NewButton("Save settings", func() {
 			if err := config.Save(u.settingsPath, u.settings); err != nil {
 				u.status.SetText("Failed to save settings: " + err.Error())
+				return
+			}
+			if err := config.SaveRocketLeague(u.defaultStatsAPIPath, u.settings); err != nil {
+				u.status.SetText("Failed to save Rocket League defaults: " + err.Error())
+				return
+			}
+			if err := config.SaveRocketLeague(u.userStatsAPIPath, u.settings); err != nil {
+				u.status.SetText("Failed to save Rocket League user config: " + err.Error())
 				return
 			}
 			u.status.SetText("Settings saved. Restart Rocket League for changes to take effect.")
